@@ -211,6 +211,18 @@ var ROUNDS=[
 var MAXSCORE=80;
 // Picks lock at the first knockout kickoff: Round of 32, Match 73 — Sun Jun 28, 2026, 3:00pm ET (19:00 UTC).
 var DEFAULT_LOCK=Date.UTC(2026,5,28,19,0,0); // ms
+// Baked-in shared pool: makes the plain site URL connect to the live pool automatically.
+// (Firebase configs are public by design; the admin token/passphrase are NOT baked in.)
+var BAKED_FB={
+  apiKey:"AIzaSyCtOuupx5ci5PHgGQwnlwt832ichn87F-E",
+  authDomain:"world-cup-pool-722db.firebaseapp.com",
+  databaseURL:"https://world-cup-pool-722db-default-rtdb.firebaseio.com",
+  projectId:"world-cup-pool-722db",
+  storageBucket:"world-cup-pool-722db.firebasestorage.app",
+  messagingSenderId:"673580962535",
+  appId:"1:673580962535:web:5f089bac1aff390cb14842"
+};
+var BAKED_POOL="4wx65s";
 var LEAF_ORDER=[74,77,73,75,83,84,81,82,76,78,79,80,86,88,85,87];
 var FIFA_R32={
   73:[{p:'R',g:'A'},{p:'R',g:'B'}],
@@ -1111,6 +1123,8 @@ document.addEventListener('DOMContentLoaded',function(){
   scrim.addEventListener('click',function(e){ if(e.target===scrim)closeStat(); });
   document.addEventListener('keydown',function(e){ if(e.key==='Escape')closeStat(); });
   restore(); readHash();
+  if(BAKED_FB && !S.fb.config) S.fb.config=BAKED_FB;
+  if(BAKED_POOL && !S.fb.poolId){ S.fb.poolId=BAKED_POOL; if(store.get('wc2_gate_'+S.fb.poolId)==='1') S.gateUnlockedLocal=true; }
   if(S.fb.config&&S.fb.poolId){ if(fbConnect()){ fbListen(); } }
   document.querySelectorAll('#roleToggle button').forEach(function(b){ b.addEventListener('click',function(){switchRole(b.dataset.role);}); });
   render();
