@@ -250,7 +250,7 @@ function anchorIndex(){
   return idx;
 }
 var S={ role:'player', view:'home', round:0, teams:defaultSlots(), name:'', picks:emptyBits(), truth:emptyBitsNull(), entries:[], live:null, liveStatus:'idle', lockTime:DEFAULT_LOCK, reveal:false,
-  fb:{config:null,poolId:'',adminToken:'',connected:false,db:null}, playerId:'', poolEntries:null, submitted:false };
+  fb:{config:null,poolId:'',adminToken:'',connected:false,db:null}, playerId:'', poolEntries:null, submitted:false, gateHash:'', gateUnlockedLocal:false };
 function isLocked(){ return Date.now()>=S.lockTime; }
 function canReveal(){ return isLocked()||S.reveal; }
 function fmtCountdown(ms){
@@ -343,6 +343,8 @@ function restore(){
     var pl=store.get('wc2_pool'); if(pl)S.fb.poolId=pl;
     var at=store.get('wc2_admtok'); if(at)S.fb.adminToken=at;
     var pid=store.get('wc2_pid'); if(pid)S.playerId=pid;
+    var gh=store.get('wc2_gatehash'); if(gh)S.gateHash=gh;
+    if(S.fb.poolId && store.get('wc2_gate_'+S.fb.poolId)==='1') S.gateUnlockedLocal=true;
   }catch(err){}
 }
 function readHash(){
@@ -501,7 +503,7 @@ function fbListen(){
   if(!S.fb.connected||!S.fb.poolId) return;
   try{
     poolRef('entries').on('value',function(snap){ S.poolEntries=snap.val()||{}; softRender(); });
-    poolRef('meta').on('value',function(snap){ fbApplyMeta(snap.val()); softRender(); });
+    poolRef('meta').on('value',function(snap){ var m=snap.val(); if(m&&m.gateHash!==undefined){ S.gateHash=m.gateHash||''; store.set('wc2_gatehash',S.gateHash); } fbApplyMeta(m); softRender(); });
     poolRef('results').on('value',function(snap){ fbApplyResults(snap.val()); softRender(); });
   }catch(e){}
 }
@@ -523,7 +525,7 @@ function fbCreatePool(){
 }
 function fbWriteMeta(){
   if(!S.fb.connected) return Promise.reject(new Error('offline'));
-  return poolRef('meta').set({ lockTime:S.lockTime, teams:encodeTeams(), updatedAt:Date.now() });
+  return poolRef('meta').set({ lockTime:S.lockTime, teams:encodeTeams(), gateHash:S.gateHash||'', updatedAt:Date.now() });
 }
 function fbWriteResults(){
   if(!S.fb.connected||!isAdmin()) return Promise.resolve();
@@ -543,6 +545,19 @@ function fbManageLink(){ // commissioner-only link that also carries the admin t
   return shareLink()+'&adm='+encodeURIComponent(S.fb.adminToken);
 }
 function pushResults(){ if(S.fb.connected&&isAdmin()){ try{ fbWriteResults(); }catch(e){} } }
+
+/* ===== commissioner gate (passphrase lock on the Commish tab) ===== */
+function cyrb53(str){ var h1=0xdeadbeef,h2=0x41c6ce57; for(var i=0;i<str.length;i++){var ch=str.charCodeAt(i);h1=Math.imul(h1^ch,2654435761);h2=Math.imul(h2^ch,1597334677);} h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909); h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909); return 'c'+(4294967296*(2097151&h2)+(h1>>>0)).toString(16); }
+function sha256(str){
+  try{ if(window.crypto&&window.crypto.subtle){ var data=new TextEncoder().encode('doubler:'+str); return window.crypto.subtle.digest('SHA-256',data).then(function(buf){ return Array.prototype.map.call(new Uint8Array(buf),function(b){return ('0'+b.toString(16)).slice(-2);}).join(''); }); } }catch(e){}
+  return Promise.resolve(cyrb53('doubler:'+str));
+}
+function gateKey(){ return 'wc2_gate_'+(S.fb.poolId||'x'); }
+function gateActive(){ return !!S.fb.poolId; }            // a shared pool exists -> Commish is protected
+function gateAllowed(){ return isAdmin() || S.gateUnlockedLocal || store.get(gateKey())==='1'; }
+function rememberGate(){ S.gateUnlockedLocal=true; store.set(gateKey(),'1'); }
+function setCommishPass(pp){ return sha256(pp).then(function(h){ S.gateHash=h; store.set('wc2_gatehash',h); rememberGate(); persist(); if(S.fb.connected&&isAdmin()) fbWriteMeta(); return true; }); }
+function tryUnlock(pp){ return sha256(pp).then(function(h){ if(S.gateHash && h===S.gateHash){ rememberGate(); return true; } return false; }); }
 function el(h){ var d=document.createElement('div'); d.innerHTML=h.trim(); return d.firstChild; }
 function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
 function toast(m){ var t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(function(){t.classList.remove('show');},1900); }
@@ -595,6 +610,7 @@ function render(){
     if(S.view==='standings')return renderStandings();
     return renderHome();
   }
+  if(gateActive() && !gateAllowed()) return renderGateLock();
   if(S.view==='setup')return renderSetup();
   if(S.view==='pool')return renderPool();
   if(S.view==='results')return renderResults();
@@ -765,6 +781,30 @@ function renderStandings(){
   setFooter('<button class="btn btn-ghost btn-block" id="bBack">Back to my bracket</button>');
   document.getElementById('bBack').addEventListener('click',function(){ S.view=anyPick()?'review':'home'; render(); scrollTop(); });
 }
+function renderGateLock(){
+  setFooter('');
+  var hasPass=!!S.gateHash;
+  var card=el('<div class="card" style="text-align:center"></div>');
+  card.appendChild(el('<div style="font-size:46px;filter:drop-shadow(0 8px 18px rgba(86,176,244,0.3))">\ud83d\udd10</div>'+
+    '<div class="eyebrow" style="margin-top:6px">Commissioner only</div>'+
+    '<h2 class="big" style="font-size:28px;margin:8px 0 4px">Locked area</h2>'+
+    '<p class="lede" style="font-size:14px">'+(hasPass?'Enter the commissioner passphrase to manage this pool.':'This area is reserved for the pool host. Open your private commissioner link to get in.')+'</p>'));
+  if(hasPass){
+    card.appendChild(el('<div style="height:12px"></div>'));
+    var inp=el('<input class="field" id="gatePass" type="password" placeholder="Passphrase" autocomplete="off">');
+    card.appendChild(inp);
+    var btn=el('<button class="btn btn-primary btn-block" style="margin-top:10px">Unlock</button>');
+    btn.addEventListener('click',function(){
+      var v=document.getElementById('gatePass').value; if(!v){toast('Enter your passphrase');return;}
+      btn.disabled=true; btn.textContent='Checking\u2026';
+      tryUnlock(v).then(function(ok){ if(ok){ toast('Unlocked'); S.view='chome'; render(); scrollTop(); } else { toast('That\u2019s not the passphrase'); btn.disabled=false; btn.textContent='Unlock'; } });
+    });
+    card.appendChild(btn);
+    inp.addEventListener('keydown',function(e){ if(e.key==='Enter')btn.click(); });
+  }
+  card.appendChild(el('<div class="note">Not the host? Head back to <b>Play</b> to fill out your bracket \u2014 that\u2019s where the game is.</div>'));
+  app.appendChild(card);
+}
 function renderCommishHome(){
   setFooter('');
   app.appendChild(el(lockBanner()));
@@ -847,6 +887,21 @@ function renderPool(){
       var r3=el('<button class="btn btn-ghost btn-block" style="margin-bottom:8px">Push current teams & deadline to pool</button>'); r3.addEventListener('click',function(){ fbWriteMeta().then(function(){toast('Teams & deadline updated for everyone');}).catch(function(){toast('Couldn\u2019t update \u2014 check connection');}); }); card.appendChild(r3);
       card.appendChild(el('<div class="note">The <b>commissioner link</b> lets you manage this pool from another device. The <b>play link</b> is what you send everyone else.</div>'));
     }
+  }
+
+  // commissioner lock
+  if(S.fb.config){
+    card.appendChild(el('<div class="hr"></div><div class="eyebrow">3 \u00b7 Commissioner lock</div><p class="lede" style="font-size:13px;margin:6px 0 8px">'+(S.gateHash?'<b style="color:var(--good)">Lock is ON.</b> Friends who tap \u201cCommish\u201d must enter this passphrase. Your private commissioner link still unlocks you automatically.':'Set a passphrase so only you (or a co-host) can open the Commish area from any device. Without it, only your private commissioner link gets in.')+'</p>'));
+    var pin=el('<input class="field" id="passSet" type="text" placeholder="'+(S.gateHash?'New passphrase (changes the lock)':'Choose a passphrase')+'" maxlength="60">');
+    card.appendChild(pin);
+    var pbtn=el('<button class="btn btn-primary btn-block" style="margin-top:8px">'+(S.gateHash?'Change passphrase':'Set passphrase & lock Commish')+'</button>');
+    pbtn.addEventListener('click',function(){
+      var v=document.getElementById('passSet').value.trim(); if(v.length<3){toast('Pick at least 3 characters');return;}
+      pbtn.disabled=true; pbtn.textContent='Saving\u2026';
+      setCommishPass(v).then(function(){ toast('Commissioner lock set'); render(); scrollTop(); }).catch(function(){ toast('Saved on this device'); render(); scrollTop(); });
+    });
+    card.appendChild(pbtn);
+    card.appendChild(el('<div class="note">Pick something your group won\u2019t guess. This stops casual snooping in the Commish tab \u2014 for full database lockdown, ask me about the auth-based rules.</div>'));
   }
 
   // setup guide
