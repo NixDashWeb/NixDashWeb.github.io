@@ -550,8 +550,12 @@ function fbSubmitEntry(){
 }
 function poolEntriesList(){
   var o=S.poolEntries||{}, out=[];
-  Object.keys(o).forEach(function(k){ var e=o[k]; if(e&&e.picks&&String(e.picks).length===31) out.push({name:e.name||'Player',picks:String(e.picks)}); });
+  Object.keys(o).forEach(function(k){ var e=o[k]; if(e&&e.picks&&String(e.picks).length===31) out.push({pid:k,name:e.name||'Player',picks:String(e.picks)}); });
   return out;
+}
+function fbDeleteEntry(pid){
+  if(!S.fb.connected||!pid) return Promise.reject(new Error('offline'));
+  return poolRef('entries/'+pid).remove();
 }
 function fbManageLink(){ // commissioner-only link that also carries the admin token
   return shareLink()+'&adm='+encodeURIComponent(S.fb.adminToken);
@@ -786,9 +790,9 @@ function renderStandings(){
   var list=poolEntriesList();
   if(!list.length){ app.appendChild(el('<div class="note" style="margin-top:14px">No entries on the board yet. Be the first \u2014 submit your bracket!</div>')); }
   else {
-    var scored=list.map(function(e){var bits=strToBits(e.picks);var sc=scoreEntry(bits);return {name:e.name,per:sc.per,total:sc.total,bits:bits};}).sort(function(a,b){return b.total-a.total;});
+    var scored=list.map(function(e){var bits=strToBits(e.picks);var sc=scoreEntry(bits);return {pid:e.pid,name:e.name,per:sc.per,total:sc.total,bits:bits};}).sort(function(a,b){return b.total-a.total;});
     var wrap=el('<div style="margin-top:18px"></div>');
-    scored.forEach(function(s,ix){ wrap.appendChild(lbEntry(s,ix,reveal)); });
+    scored.forEach(function(s,ix){ wrap.appendChild(lbEntry(s,ix,reveal,false)); });
     app.appendChild(wrap);
   }
   setFooter('<button class="btn btn-ghost btn-block" id="bBack">Back to my bracket</button>');
@@ -1050,16 +1054,16 @@ function renderLeaderboard(){
   var list=connected?poolEntriesList():S.entries;
   if(!list.length){ app.appendChild(el('<div class="note" style="margin-top:14px">'+(connected?'No entries on the board yet. Share the play link so people can submit.':'No players yet. Each person fills their bracket, copies their code, and sends it to you. Paste them in above.')+'</div>')); }
   else {
-    var scored=list.map(function(e){var bits=strToBits(e.picks); var sc=scoreEntry(bits); return {name:e.name,per:sc.per,total:sc.total,bits:bits};}).sort(function(a,b){return b.total-a.total;});
+    var scored=list.map(function(e){var bits=strToBits(e.picks); var sc=scoreEntry(bits); return {pid:e.pid,name:e.name,per:sc.per,total:sc.total,bits:bits};}).sort(function(a,b){return b.total-a.total;});
     var wrap=el('<div style="margin-top:18px"></div>');
-    scored.forEach(function(s,ix){ wrap.appendChild(lbEntry(s,ix,reveal)); });
+    scored.forEach(function(s,ix){ wrap.appendChild(lbEntry(s,ix,reveal,true)); });
     app.appendChild(wrap);
   }
   setFooter('<button class="btn btn-ghost" id="bMenu" style="flex:0 0 auto">Menu</button><button class="btn btn-ghost btn-block" id="bRes">Enter results</button>');
   document.getElementById('bMenu').addEventListener('click',function(){S.view='chome';render();scrollTop();});
   document.getElementById('bRes').addEventListener('click',function(){S.view='results';S.round=0;render();scrollTop();});
 }
-function lbEntry(s,ix,reveal){
+function lbEntry(s,ix,reveal,canRemove){
   var rank=ix+1;
   var e=el('<div class="lb-entry"></div>');
   var adv=advFromPicks(s.bits);
@@ -1083,9 +1087,20 @@ function lbEntry(s,ix,reveal){
     e.appendChild(det);
     head.addEventListener('click',function(){ det.classList.toggle('hidden'); });
   }
-  var del=el('<div class="lb-del"><span>remove</span></div>');
-  del.querySelector('span').addEventListener('click',function(ev){ ev.stopPropagation(); S.entries=S.entries.filter(function(x){return x.name.toLowerCase()!==s.name.toLowerCase();}); persist();render();scrollTop(); });
-  e.appendChild(del);
+  if(canRemove){
+    var del=el('<div class="lb-del"><span>remove</span></div>');
+    del.querySelector('span').addEventListener('click',function(ev){
+      ev.stopPropagation();
+      if(!window.confirm('Remove '+s.name+' from the pool?')) return;
+      if(S.fb.connected && s.pid){
+        fbDeleteEntry(s.pid).then(function(){ toast('Removed '+s.name); })
+          .catch(function(){ toast('Couldn\u2019t remove \u2014 entries are locked after the deadline'); });
+      } else {
+        S.entries=S.entries.filter(function(x){return x.name.toLowerCase()!==s.name.toLowerCase();}); persist();render();scrollTop();
+      }
+    });
+    e.appendChild(del);
+  }
   return e;
 }
 function openStat(ix){
