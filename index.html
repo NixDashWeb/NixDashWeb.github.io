@@ -663,6 +663,7 @@ function setTouched(r,m){TOUCH[r+'-'+m]=true;TOUCHED_ANY=true;}
 function countDecided(r){ var n=0,adv=advFromPicks(S.picks); for(var m=0;m<ROUNDS[r].matches;m++){var e=entrants(adv,r,m); if(e[0]!=null&&e[1]!=null&&touched(r,m))n++;} return n; }
 function invalidateDown(r,m){ var cm=m; for(var rr=r+1;rr<5;rr++){cm=Math.floor(cm/2);delete TOUCH[rr+'-'+cm];} }
 function renderPlay(){
+  app.innerHTML='';
   if(isLocked()){ S.view='review'; return renderReview(); }
   var r=S.round,R=ROUNDS[r],adv=advFromPicks(S.picks);
   var made=countDecided(r);
@@ -977,6 +978,7 @@ function slotInput(i){
   slot.appendChild(nm); return slot;
 }
 function renderResults(){
+  app.innerHTML='';
   var r=S.round,R=ROUNDS[r],adv=advFromTruth(S.truth);
   var head=el('<div class="roundhead"><div class="toprow"><div><div class="eyebrow" style="color:'+R.c+'">Results \u00b7 round '+(r+1)+' of 5</div><div class="rtitle">'+R.name+'</div></div><div class="chip" style="background:'+R.c+'">'+R.pts+' PT'+(R.pts>1?'S':'')+'</div></div><div class="stepdots">'+ROUNDS.map(function(rr,ix){return '<span style="background:'+(ix<=r?rr.hex:'#0c2016')+'"></span>';}).join('')+'</div></div>');
   app.appendChild(head);
